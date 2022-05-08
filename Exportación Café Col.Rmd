@@ -1,0 +1,248 @@
+---
+title: "Exportación Café"
+author: "Axel Escobar, Miguel Muñoz, Juan Alarcon, Daniel González"
+date: "Diciembre"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+# Serie de Tiempo de Exportación de Café
+Se realizará el ajuste por 3 modelos los cuales son: 
+
+* Suavizamiento Exponencial (Holt Winters) 
+
+* Red Neuronal Recurrente  
+
+* Modelo Sarima   
+
+<b> Vamos a leer la base de datos </b>
+```{r}
+library(tseries)
+library(readxl)
+library(tidyverse)
+library(FitAR)
+library(forecast)
+library(TSstudio)
+library(stats)
+library(urca)
+library(lmtest)
+library(uroot)
+library(fUnitRoots)
+library(sarima)
+require("PolynomF")
+Expor_cafe <-read_excel("Exportacion_cafe.xlsx")
+```
+
+Nos fijamos en la carga de café desde enero del año 1958 hasta septiembre del 2021
+
+
+```{r}
+Exportacion_cafe <- ts(Expor_cafe[,2], start = c(1958,1), end = c(2021,9), frequency = 12)
+plot(Exportacion_cafe,type="l",xlab="Tiempo",ylab="Carga",main="Serie exportación cafe")
+
+```
+
+
+
+Vemos que la serie no muestra estacionariedad y vemos que su varianza marginal no es muy grande pero aún así no es constante.
+
+# Mapa de calor
+
+```{r}
+library(TSstudio)
+TSstudio::ts_heatmap(Exportacion_cafe)
+
+```
+
+En el mapa de calor vemos que puede haber cierta estacionalidad, sin embargo no es muy concluyente.
+
+ 
+Apliquemos transformación de Box Cox para visualizar qué tanto se estabiliza la varianza marginal
+
+```{r}
+forecast::BoxCox.lambda(Exportacion_cafe, method = "guerrero", lower = -1, upper = 3) ###Me entrega el valor de lambda 
+##method="loglik"
+FitAR::BoxCox(Exportacion_cafe)
+Texportacion_cafe<-(Exportacion_cafe)^0.76
+plot(forecast::BoxCox(Exportacion_cafe,lambda=0.76),type="l")
+```
+
+Observamos la serie original y la serie con transformación de Box-Cox
+
+```{r}
+par(mfrow=c(2,1))
+plot(Exportacion_cafe,type="l",xlab="Tiempo",ylab="Carga",main="Serie exportación cafe")
+plot(forecast::BoxCox(Exportacion_cafe,lambda=0.76),type="l",xlab="Tiempo",ylab="Carga",main="Serie Exportación Café con Transf. Box Cox")
+```
+
+
+
+## Suavizamiento Exponencial(Holt-Winters)
+
+Tomamos nuestra serie hasta Junio del 2015 y haremos las predicciones correspondientes al número del conjunto de testeo (76 datos)
+
+```{r}
+length(Exportacion_cafe) 
+TestH<-Exportacion_cafe[690:765]
+length(TestH)
+Export_cafeH<-as.vector(Exportacion_cafe[1:689])
+Export_cafeH<-ts(Export_cafeH,start = c(1958,1),end = c(2015,5),frequency = 12)
+HWEC=stats::HoltWinters(Export_cafeH,seasonal="additive")
+plot(HWEC)
+```
+
+
+ 
+Veamos los valores predichos para el conjunto de testeo, esto es, de mayo del 2015 hasta septiembre de 2021
+
+```{r}
+Predicciones=predict(HWEC, 76, prediction.interval = T)
+Predicciones 
+plot(HWEC, Predicciones)
+Predicciones<-as.data.frame(Predicciones)
+```
+
+
+Consideremos el MSE para el modelo 
+
+```{r}
+mse_testHoltWinters<-mean((TestH-Predicciones$fit)^2)
+mse_testHoltWinters
+
+```
+
+Y vemos el gráfico para los residuales  
+
+```{r}
+par(mfrow=c(2,1))
+R1<-TestH-Predicciones$fit
+plot(R1,type="l",main="Residuales Modelo Holt-Winters")
+
+acf(R1,main="Gráfico de autocorrelación para los residuos")
+
+ 
+```
+
+
+
+Vemos que el modelo captura bien la autocorrelación de la serie. 
+
+# Modelo Sarima 
+
+```{r}
+EC<- Exportacion_cafe
+acf(EC,ci.type='ma')
+pacf(EC)
+nsdiffs(EC)
+adfTest(EC)
+```
+
+# Primera diferenciacion ordinaria
+
+```{r}
+DEC<-diff(EC)
+plot(DEC)
+nsdiffs(DEC)
+acf(DEC,ci.type='ma')
+pacf(DEC)
+adfTest(DEC)
+```
+
+# Probamos varios modelos
+
+```{r}
+#modelo#
+modelo = Arima(EC, c(6, 1, 1),seasonal = list(order = c(0, 0, 1), period = 12))
+coeftest(modelo)
+
+#modelo*#
+modelo = Arima(EC, c(3, 1, 1),seasonal = list(order = c(0, 0, 1), period = 12))
+coeftest(modelo)
+
+#modelo*#
+modelo = Arima(EC, c(3, 1, 1),seasonal = list(order = c(0, 0, 2), period = 12))
+coeftest(modelo)
+
+#modelo*#
+modelo = Arima(EC, c(3, 1, 1),seasonal = list(order = c(0, 0, 2), period = 12))
+coeftest(modelo)
+
+#modelo**#
+modelo = Arima(EC, c(0, 1, 1),seasonal = list(order = c(0, 1, 1), period = 12))
+coeftest(modelo)
+```
+
+# Analisis de residuales
+
+```{r}
+residuales <- modelo$residuals
+plot(residuales)
+acf(residuales)
+pacf(residuales)
+#Test de autocorrelaci?n
+Box.test(residuales, lag = (length(residuales)/4), type = "Ljung-Box", fitdf = 2)
+```
+
+#Estadisticas CUSUM
+
+```{r}
+res=residuales
+cum=cumsum(res)/sd(res)
+N=length(res)
+cumq=cumsum(res^2)/sum(res^2)
+Af=0.948 ###Cuantil del 95% para la estad?stica cusum
+co=0.14422####Valor del cuantil aproximado para cusumsq para n/2
+LS=Af*sqrt(N)+2*Af*c(1:length(res))/sqrt(N)
+LI=-LS
+LQS=co+(1:length(res))/N
+LQI=-co+(1:length(res))/N
+par(mfrow=c(2,1))
+plot(cum,type="l",ylim=c(min(LI),max(LS)),xlab="t",ylab="",main="CUSUM")
+lines(LS,type="S",col="red")
+lines(LI,type="S",col="red")
+#CUSUM Square
+plot(cumq,type="l",xlab="t",ylab="",main="CUSUMSQ")                      
+lines(LQS,type="S",col="red")                                                                           
+lines(LQI,type="S",col="red")
+```
+
+
+# Comparacion y ECM
+
+```{r}
+library(fpp)
+train <- window(EC,start=c(1958,01),end=c(2015,05))
+test <- window(EC,start=c(2015,06),end=c(2021,09))
+fitmodelo <- Arima(EC, c(0, 1, 1),seasonal = list(order = c(0, 1, 1), period = 12))
+refit <- Arima(EC, model=fitmodelo)
+fc <- window(fitted(refit), start=c(2015,06))
+fc
+
+h <- 1
+train <- window(EC,start=c(1958,01),end=c(2015,05))
+test <- window(EC,start=c(2015,06),end=c(2021,09))
+n <- length(test) - h + 1
+fitmodelo <- Arima(EC, c(0, 1, 1),seasonal = list(order = c(0, 1, 1), period = 12))
+fc <- ts(numeric(n), start=c(2015,06), freq=12)
+for(i in 1:n)
+{  
+  x <- window(EC, end=c(2015, 06+(i-1)))
+  refit <- Arima(x, model=fitmodelo)
+  fc[i] <- forecast(refit, h=h)$mean[h]
+}
+dife=(test-fc)^2
+
+```
+
+Con lo cual, tenemos un MSE de 
+
+```{r}
+ecm=(1/(length(test)))*sum(dife)
+ecm
+```
+
+
+
+
